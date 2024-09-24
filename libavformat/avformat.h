@@ -1613,11 +1613,7 @@ typedef struct AVFormatContext {
      * open the file.
      */
     AVIOInterruptCB interrupt_callback;
-
-    // save interrupt callback for free
-    AVIOInterruptCB *interruptCallback;
-    int flagOpenWithInterruptData;
-
+       
     /**
      * Flags to enable debugging.
      */

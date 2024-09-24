@@ -148,11 +148,7 @@ AVIOContext *avio_alloc_context(
 }
 
 void avio_context_free(AVIOContext **ps)
-{
-    if ((*ps)->flagOpenWithInterruptData >= 1 && (*ps)->interruptCallback != NULL) {
-        av_log(NULL, AV_LOG_INFO, "Free interruptCallback\n");
-        av_freep(&((*ps)->interruptCallback));
-    }
+{    
     av_freep(ps);
 }
 
@@ -1252,9 +1248,7 @@ int ffio_open_whitelist(AVIOContext **s, const char *filename, int flags,
     {
         ffurl_close(h);
         return err;
-    }
-    av_log(NULL, AV_LOG_INFO, "Set interruptCallback\n");
-    (*s)->interruptCallback = int_cb;
+    }    
     return 0;
 }
 
@@ -1282,9 +1276,6 @@ int avio_open2(AVIOContext **s, const char *filename, int flags,
                const AVIOInterruptCB *int_cb, AVDictionary **options)
 {
     int ret = ffio_open_whitelist(s, filename, flags, int_cb, options, NULL, NULL);
-    if (ret == 0) {
-        (*s)->flagOpenWithInterruptData = -1;
-    }
     return ret;
 }
 
@@ -1306,8 +1297,6 @@ int avio_open2_with_interruptdata(AVIOContext **s, const char *filename, int fla
     if (ret != 0 && cb != NULL)
     {
         av_free(cb);
-    } else {
-        (*s)->flagOpenWithInterruptData = 1;
     }
     return ret;
 }

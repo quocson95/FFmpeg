@@ -554,181 +554,6 @@ static int callbackInterrupt(void *data)
     return 0;
 }
 
-int avformat_open_input_with_interrupt(AVFormatContext **ps, const char *filename,
-                        AVInputFormat *fmt, const AVIOInterruptData *interruptData, AVDictionary **options)
-{
-    AVFormatContext *s = *ps;
-    int i, ret = 0;
-    AVDictionary *tmp = NULL;
-    ID3v2ExtraMeta *id3v2_extra_meta = NULL;
-
-    if (!s && !(s = avformat_alloc_context()))
-        return AVERROR(ENOMEM);
-    if (!s->av_class) {
-        av_log(NULL, AV_LOG_ERROR, "Input context has not been properly allocated by avformat_alloc_context() and is not NULL either\n");
-        return AVERROR(EINVAL);
-    }
-
-    s->flagOpenWithInterruptData = -1;
-
-    AVIOInterruptCB *cb = NULL;
-    if (interruptData != NULL)
-    {
-        cb = av_malloc(sizeof(AVIOInterruptCB *));
-        cb->callback = callbackInterrupt;
-        cb->opaque = interruptData;
-        s->interrupt_callback = *cb;
-        s->interruptCallback = cb;
-        s->flagOpenWithInterruptData = 1;
-        av_log(NULL, AV_LOG_INFO, "Setup interrup callback avformat_open_input_with_interrupt done\n");
-    }
-    else
-    {
-        av_log(NULL, AV_LOG_INFO, "callback avio_open2_with_interruptdata null\n");
-    }
-
-    if (fmt)
-        s->iformat = fmt;
-
-    if (options)
-        av_dict_copy(&tmp, *options, 0);
-
-    if (s->pb) // must be before any goto fail
-        s->flags |= AVFMT_FLAG_CUSTOM_IO;
-
-    if ((ret = av_opt_set_dict(s, &tmp)) < 0)
-        goto fail;
-
-    if (!(s->url = av_strdup(filename ? filename : ""))) {
-        ret = AVERROR(ENOMEM);
-        goto fail;
-    }
-
-#if FF_API_FORMAT_FILENAME
-FF_DISABLE_DEPRECATION_WARNINGS
-    av_strlcpy(s->filename, filename ? filename : "", sizeof(s->filename));
-FF_ENABLE_DEPRECATION_WARNINGS
-#endif
-    if ((ret = init_input(s, filename, &tmp)) < 0)
-        goto fail;
-    s->probe_score = ret;
-
-    if (!s->protocol_whitelist && s->pb && s->pb->protocol_whitelist) {
-        s->protocol_whitelist = av_strdup(s->pb->protocol_whitelist);
-        if (!s->protocol_whitelist) {
-            ret = AVERROR(ENOMEM);
-            goto fail;
-        }
-    }
-
-    if (!s->protocol_blacklist && s->pb && s->pb->protocol_blacklist) {
-        s->protocol_blacklist = av_strdup(s->pb->protocol_blacklist);
-        if (!s->protocol_blacklist) {
-            ret = AVERROR(ENOMEM);
-            goto fail;
-        }
-    }
-
-    if (s->format_whitelist && av_match_list(s->iformat->name, s->format_whitelist, ',') <= 0) {
-        av_log(s, AV_LOG_ERROR, "Format not on whitelist \'%s\'\n", s->format_whitelist);
-        ret = AVERROR(EINVAL);
-        goto fail;
-    }
-
-    avio_skip(s->pb, s->skip_initial_bytes);
-
-    /* Check filename in case an image number is expected. */
-    if (s->iformat->flags & AVFMT_NEEDNUMBER) {
-        if (!av_filename_number_test(filename)) {
-            ret = AVERROR(EINVAL);
-            goto fail;
-        }
-    }
-
-    s->duration = s->start_time = AV_NOPTS_VALUE;
-
-    /* Allocate private data. */
-    if (s->iformat->priv_data_size > 0) {
-        if (!(s->priv_data = av_mallocz(s->iformat->priv_data_size))) {
-            ret = AVERROR(ENOMEM);
-            goto fail;
-        }
-        if (s->iformat->priv_class) {
-            *(const AVClass **) s->priv_data = s->iformat->priv_class;
-            av_opt_set_defaults(s->priv_data);
-            if ((ret = av_opt_set_dict(s->priv_data, &tmp)) < 0)
-                goto fail;
-        }
-    }
-
-    /* e.g. AVFMT_NOFILE formats will not have a AVIOContext */
-    if (s->pb)
-        ff_id3v2_read_dict(s->pb, &s->internal->id3v2_meta, ID3v2_DEFAULT_MAGIC, &id3v2_extra_meta);
-
-
-    if (!(s->flags&AVFMT_FLAG_PRIV_OPT) && s->iformat->read_header)
-        if ((ret = s->iformat->read_header(s)) < 0)
-            goto fail;
-
-    if (!s->metadata) {
-        s->metadata = s->internal->id3v2_meta;
-        s->internal->id3v2_meta = NULL;
-    } else if (s->internal->id3v2_meta) {
-        int level = AV_LOG_WARNING;
-        if (s->error_recognition & AV_EF_COMPLIANT)
-            level = AV_LOG_ERROR;
-        av_log(s, level, "Discarding ID3 tags because more suitable tags were found.\n");
-        av_dict_free(&s->internal->id3v2_meta);
-        if (s->error_recognition & AV_EF_EXPLODE)
-            return AVERROR_INVALIDDATA;
-    }
-
-    if (id3v2_extra_meta) {
-        if (!strcmp(s->iformat->name, "mp3") || !strcmp(s->iformat->name, "aac") ||
-            !strcmp(s->iformat->name, "tta")) {
-            if ((ret = ff_id3v2_parse_apic(s, &id3v2_extra_meta)) < 0)
-                goto fail;
-            if ((ret = ff_id3v2_parse_chapters(s, &id3v2_extra_meta)) < 0)
-                goto fail;
-            if ((ret = ff_id3v2_parse_priv(s, &id3v2_extra_meta)) < 0)
-                goto fail;
-        } else
-            av_log(s, AV_LOG_DEBUG, "demuxer does not support additional id3 data, skipping\n");
-    }
-    ff_id3v2_free_extra_meta(&id3v2_extra_meta);
-
-    if ((ret = avformat_queue_attached_pictures(s)) < 0)
-        goto fail;
-
-    if (!(s->flags&AVFMT_FLAG_PRIV_OPT) && s->pb && !s->internal->data_offset)
-        s->internal->data_offset = avio_tell(s->pb);
-
-    s->internal->raw_packet_buffer_remaining_size = RAW_PACKET_BUFFER_SIZE;
-
-    update_stream_avctx(s);
-
-    for (i = 0; i < s->nb_streams; i++)
-        s->streams[i]->internal->orig_codec_id = s->streams[i]->codecpar->codec_id;
-
-    if (options) {
-        av_dict_free(options);
-        *options = tmp;
-    }
-    *ps = s;
-    return 0;
-
-fail:
-    ff_id3v2_free_extra_meta(&id3v2_extra_meta);
-    av_dict_free(&tmp);
-    if (s->pb && !(s->flags & AVFMT_FLAG_CUSTOM_IO))
-        avio_closep(&s->pb);
-    avformat_free_context(s);
-    *ps = NULL;
-    return ret;
-}
-
-
-
 int avformat_open_input(AVFormatContext **ps, const char *filename,
                         AVInputFormat *fmt, AVDictionary **options)
 {
@@ -744,7 +569,6 @@ int avformat_open_input(AVFormatContext **ps, const char *filename,
         return AVERROR(EINVAL);
     }
 
-    s->flagOpenWithInterruptData = -1;
     if (fmt)
         s->iformat = fmt;
 
@@ -4615,12 +4439,7 @@ void avformat_free_context(AVFormatContext *s)
     while (s->nb_chapters--) {
         av_dict_free(&s->chapters[s->nb_chapters]->metadata);
         av_freep(&s->chapters[s->nb_chapters]);
-    }
-
-    if (s->flagOpenWithInterruptData > 0 && s->interruptCallback != NULL) {
-        av_freep(&(s->interruptCallback));
-        av_log(NULL, AV_LOG_INFO, "Free interruptCallback\n");
-    }
+    }   
 
     av_freep(&s->chapters);
     av_dict_free(&s->metadata);

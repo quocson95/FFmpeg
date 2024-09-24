@@ -354,11 +354,7 @@ typedef struct AVIOContext {
     /**
      * Try to buffer at least this amount of data before flushing it
      */
-    int min_packet_size;
-
-    // save interrupt callback for free
-    AVIOInterruptCB *interruptCallback;
-    int flagOpenWithInterruptData;
+    int min_packet_size;  
 } AVIOContext;
 
 /**
